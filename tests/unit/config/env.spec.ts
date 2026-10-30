@@ -18,6 +18,50 @@ describe('validateEnv', () => {
       CLASSIFIER_MAX_DELAY_MS: 1500,
       CLASSIFIER_FAILURE_RATE: 0.1,
       REVIEW_THRESHOLD: 0.7,
+      WORKER_BATCH_SIZE: 10,
+      WORKER_POLL_INTERVAL_MS: 1000,
+      WORKER_MAX_ATTEMPTS: 5,
+      WORKER_RETRY_BASE_MS: 2000,
+      WORKER_RETRY_MAX_MS: 60000,
+      WORKER_STALE_LOCK_MS: 60000,
+    });
+  });
+
+  describe('worker settings', () => {
+    it.each([
+      ['WORKER_BATCH_SIZE', '0'],
+      ['WORKER_BATCH_SIZE', '101'],
+      ['WORKER_POLL_INTERVAL_MS', '5'],
+      ['WORKER_MAX_ATTEMPTS', '0'],
+      ['WORKER_MAX_ATTEMPTS', '21'],
+      ['WORKER_RETRY_BASE_MS', '-1'],
+      ['WORKER_RETRY_MAX_MS', 'soon'],
+      ['WORKER_STALE_LOCK_MS', '1.5'],
+    ])('refuses %s=%s and names it', (name, value) => {
+      expect(() => validateEnv({ ...valid, [name]: value })).toThrow(
+        new RegExp(name),
+      );
+    });
+
+    it('refuses a retry max below the retry base', () => {
+      expect(() =>
+        validateEnv({
+          ...valid,
+          WORKER_RETRY_BASE_MS: '5000',
+          WORKER_RETRY_MAX_MS: '1000',
+        }),
+      ).toThrow(/WORKER_RETRY_MAX_MS/);
+    });
+
+    it('refuses a stale-lock time not above the classifier max delay', () => {
+      // Otherwise a slow but healthy call would be taken over by another worker.
+      expect(() =>
+        validateEnv({
+          ...valid,
+          CLASSIFIER_MAX_DELAY_MS: '5000',
+          WORKER_STALE_LOCK_MS: '5000',
+        }),
+      ).toThrow(/WORKER_STALE_LOCK_MS/);
     });
   });
 

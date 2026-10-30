@@ -37,6 +37,12 @@ services:
       CLASSIFIER_MAX_DELAY_MS: ${CLASSIFIER_MAX_DELAY_MS:-1500}
       CLASSIFIER_FAILURE_RATE: ${CLASSIFIER_FAILURE_RATE:-0.1}
       REVIEW_THRESHOLD: ${REVIEW_THRESHOLD:-0.7}
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-10}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-1000}
+      WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-5}
+      WORKER_RETRY_BASE_MS: ${WORKER_RETRY_BASE_MS:-2000}
+      WORKER_RETRY_MAX_MS: ${WORKER_RETRY_MAX_MS:-60000}
+      WORKER_STALE_LOCK_MS: ${WORKER_STALE_LOCK_MS:-60000}
       # Inside Docker the DB is reached by service name, not localhost.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ingestion
     depends_on:
@@ -56,6 +62,18 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
+
+  # Background classification. More workers: docker compose up --scale worker=3
+  worker:
+    image: ingestion-classification-service:local
+    command: ['node', 'dist/worker/main.js']
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Lets the current round finish on docker stop.
+    stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:
