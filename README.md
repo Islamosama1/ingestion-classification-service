@@ -2,7 +2,7 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read. Record search, manual review, corrections and retry endpoints are being built.
+> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history. Manual review, corrections and retry endpoints are being built.
 
 ## Stack
 
@@ -214,6 +214,45 @@ curl -X POST http://localhost:3000/imports \
 
 `total` is the count for the filter, for paging. A bad `outcome`, `limit` or `offset` → `400 invalid_query`.
 
+### `GET /records`: search stored records
+
+Filters (all optional, combined with AND):
+
+| Param | Matches |
+|---|---|
+| `source` | exact source |
+| `category` | current classification's category (after a correction, the corrected one) |
+| `status` | `pending` / `processing` / `classified` / `needs_review` / `failed` |
+| `needsReview` | `true` = needs manual review, `false` = everything else |
+| `importId` | records created by that import |
+| `from`, `to` | record `date` range, both ends included; a date-only `to` covers the whole day |
+| `q` | title contains the text (case-insensitive; `%` and `_` are plain characters) |
+| `limit`, `offset` | page size 1–200 (default 50), offset (default 0) |
+
+Newest stored first. A bad param → `400 invalid_query`.
+
+```json
+{
+  "items": [
+    {
+      "id": "a41f…", "externalId": "e-1", "source": "partner-a",
+      "title": "Football camp", "description": "Summer camp for kids",
+      "date": "2026-07-01T00:00:00.000Z", "importId": "7c1e…",
+      "status": "classified", "attempts": 1, "lastError": null,
+      "createdAt": "2026-10-30T09:12:44.120Z",
+      "classification": { "id": "5d0b…", "category": "sports", "confidence": 1, "needsReview": false, "kind": "auto", "createdAt": "…" }
+    }
+  ],
+  "total": 1, "limit": 50, "offset": 0
+}
+```
+
+`classification` is `null` until the record is classified.
+
+### `GET /records/:id`: one record with its classification history
+
+Same fields as a list item, plus `history`: every classification the record ever had, oldest first (automatic results and corrections, each with `kind`, `correctsId`, `reason`). The current one is in `classification`. Unknown id → `404`.
+
 ### Errors
 
 Every error has the same shape:
@@ -326,7 +365,8 @@ src/
   api-keys/    global X-API-Key guard, @Public()
   common/      shared error filter
   imports/     POST /imports, GET /imports/:id(/items), validation, duplicates
-  records/     RecordEntity
+  records/     GET /records(/:id), RecordEntity
+  common/query.ts  shared query-param checks
   classification/ Classification entity, categories, mock classifier
   health/      GET /health
   worker/      background classification worker (own process)
@@ -346,4 +386,4 @@ docker-compose.yml postgres + migrate + api + worker
 
 ## Coming next
 
-Record search, manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
+Manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
