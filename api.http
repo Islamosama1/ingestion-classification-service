@@ -1,0 +1,99 @@
+### Example requests for every endpoint.
+### VS Code: "REST Client" extension; JetBrains IDEs: built in. Click "Send Request".
+### Set apiKey to the API_KEY in your .env. Requests further down reuse ids
+### from earlier responses (run them top to bottom).
+
+@baseUrl = http://localhost:3000
+@apiKey = CHANGE_ME_TO_A_LONG_RANDOM_KEY
+
+### Health (no key needed)
+GET {{baseUrl}}/health
+
+### Any other request without the key → 401
+GET {{baseUrl}}/records
+
+### Import records: created / invalid / duplicate / conflict
+# @name createImport
+POST {{baseUrl}}/imports
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "records": [
+    { "externalId": "e-1", "source": "partner-a", "title": "Football tournament", "description": "Open to all ages", "date": "2026-07-01" },
+    { "externalId": "e-2", "source": "partner-a", "title": "Community picnic", "description": "Bring your own food", "date": "2026-07-05T10:00:00+02:00" },
+    { "externalId": "e-3", "source": "partner-b", "title": "Modern art exhibition", "description": "At the city museum", "date": "2026-07-10" },
+    { "externalId": "e-4", "source": "partner-b", "title": "", "description": "Missing title, impossible date", "date": "2026-02-30" },
+    { "externalId": "e-1", "source": "partner-a", "title": "Football tournament", "description": "Open to all ages", "date": "2026-07-01" },
+    { "externalId": "e-3", "source": "partner-b", "title": "Changed title", "description": "At the city museum", "date": "2026-07-10" }
+  ]
+}
+
+@importId = {{createImport.response.body.importId}}
+@recordId = {{createImport.response.body.items[0].recordId}}
+@reviewRecordId = {{createImport.response.body.items[1].recordId}}
+
+### Import progress (classification runs in the background)
+GET {{baseUrl}}/imports/{{importId}}
+X-API-Key: {{apiKey}}
+
+### Per-record feedback: only the invalid ones
+GET {{baseUrl}}/imports/{{importId}}/items?outcome=invalid
+X-API-Key: {{apiKey}}
+
+### Per-record feedback: paging
+GET {{baseUrl}}/imports/{{importId}}/items?limit=2&offset=2
+X-API-Key: {{apiKey}}
+
+### Search records: all filters are optional and combine
+GET {{baseUrl}}/records?source=partner-a&from=2026-07-01&to=2026-07-31&q=football&limit=20
+X-API-Key: {{apiKey}}
+
+### Records by category / status
+GET {{baseUrl}}/records?category=sports&status=classified
+X-API-Key: {{apiKey}}
+
+### One record with its classification history
+GET {{baseUrl}}/records/{{recordId}}
+X-API-Key: {{apiKey}}
+
+### Review queue (longest waiting first)
+GET {{baseUrl}}/reviews
+X-API-Key: {{apiKey}}
+
+### Correct a classification ("Community picnic" → other, needs review)
+POST {{baseUrl}}/records/{{reviewRecordId}}/corrections
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{ "category": "culture", "reason": "A community event" }
+
+### The record now: correction is current, the original stays in history
+GET {{baseUrl}}/records/{{reviewRecordId}}
+X-API-Key: {{apiKey}}
+
+### Retry one failed record (409 if it isn't failed)
+POST {{baseUrl}}/records/{{recordId}}/retry
+X-API-Key: {{apiKey}}
+
+### Retry every failed record of the import
+POST {{baseUrl}}/imports/{{importId}}/retry
+X-API-Key: {{apiKey}}
+
+### Error: invalid batch → 400 invalid_batch
+POST {{baseUrl}}/imports
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{ "records": [] }
+
+### Error: unknown category in a correction → 400 invalid_body
+POST {{baseUrl}}/records/{{recordId}}/corrections
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{ "category": "music", "reason": "r" }
+
+### Error: bad filter → 400 invalid_query
+GET {{baseUrl}}/records?status=done
+X-API-Key: {{apiKey}}

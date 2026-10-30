@@ -2,7 +2,18 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history; results needing manual review are listed in a review queue and can be corrected (the original result is kept); failed records can be recovered without duplicating data or repeating successful work.
+| Requirement | How |
+|---|---|
+| Submit multiple records for import | `POST /imports` (1–1000 per request) |
+| Identify invalid records with useful feedback | Per-record outcome with `{ field, message }` errors, in the response and `GET /imports/:id/items` |
+| Prevent duplicates | DB unique key on (`source`, `externalId`); same content → `duplicate`, different → `conflict`, never overwritten; safe under concurrent imports |
+| Track progress and outcome of an import | `GET /imports/:id`: counts + classification progress, status always current |
+| Retrieve and filter stored records | `GET /records` with 7 filters + paging |
+| Retrieve a record and its classification | `GET /records/:id`: current result + full history |
+| Identify results needing manual review | `GET /reviews` queue (longest waiting first), `needsReview` filter |
+| Correct a classification, keeping the original | `POST /records/:id/corrections`: new row; classifications are append-only (DB trigger) |
+| Recover failed records without duplicates or redoing work | Automatic retries with backoff; `POST /records/:id/retry`, `POST /imports/:id/retry` touch only `failed` records |
+| Slow, sometimes failing classification | Mock classifier with random delay / failures, run by a background worker with crash recovery |
 
 ## Stack
 
@@ -36,6 +47,8 @@ curl -H "X-API-Key: <API_KEY from .env>" http://localhost:3000/...
 ```
 
 Stop with `docker compose down` (add `-v` to also delete the database).
+
+To try every endpoint, use the [API collection](#api-collection).
 
 On every start a one-off `migrate` container applies pending migrations and exits; the `api` and `worker` containers (compiled app, non-root user) start only after that succeeds. The `worker` classifies imported records in the background; run more of them with `docker compose up -d --scale worker=3`.
 
@@ -123,11 +136,24 @@ curl http://localhost:3000/health
 
 | Command | What | Needs |
 |---|---|---|
-| `npm test` | Unit tests (`tests/unit/`) | nothing |
-| `npm run test:integration` | Integration tests on the real test DB (`tests/integration/`) | Postgres running, `TEST_DATABASE_URL` set |
-| `npm run test:api-flow` | Full HTTP flows (`tests/api-flow/`) | Postgres running |
+| `npm test` | Unit tests (`tests/unit/`): logic, with fakes | nothing |
+| `npm run test:integration` | Integration tests (`tests/integration/`): the full app or the worker on the real test DB — SQL, constraints, transactions, concurrency | Postgres running (`docker compose up -d --wait postgres`), `TEST_DATABASE_URL` in `.env` |
+| `npm run test:api-flow` | The whole flow over HTTP (`tests/api-flow/`): import → worker → feedback → search → review → correct → retry | The service running (`docker compose up -d --build --wait`, or `start:dev` + `start:worker:dev`); uses `API_KEY` / `PORT` from `.env`, or `API_BASE_URL` |
 
-Integration tests always use `TEST_DATABASE_URL` (set before the app loads) and stop if it equals `DATABASE_URL`, so they never touch the dev database. They use their own fixed test API key, not the one in `.env`.
+- Integration tests always use `TEST_DATABASE_URL` (set before the app loads) and stop if it equals `DATABASE_URL`, so they never touch the dev database. They use their own fixed test API key, not the one in `.env`. Each test cleans up the rows it wrote.
+- The worker tests use a scriptable fake classifier (success, needs review, failures, slow calls, a takeover mid-call) instead of the random mock.
+- The API-flow test uses a new `source` on every run, so it can run against a database that already has data.
+
+What is covered, by area:
+
+| Area | Tested behaviour (examples) |
+|---|---|
+| Validation | Every field rule at the limit and one past it, wrong types, impossible dates, time zones, non-object items, batch size |
+| Duplicates | In-batch and against stored records, duplicate vs conflict, never overwritten, **two concurrent imports of the same records → one row each** |
+| Worker | Claim / classify / save, retries with backoff, final failure, crash recovery, late result dropped, **3 concurrent workers → each record classified exactly once** |
+| Corrections | Original unchanged (and the DB refuses `UPDATE` / `DELETE`), chains, **concurrent corrections → none lost**, `409` / `404` / `400` |
+| Retry | Only `failed` records touched, everything else byte-for-byte unchanged, **concurrent retries → requeued once** |
+| API | Auth on every route, error shape, filters, paging, `404` for unknown and malformed ids |
 
 ## Authentication
 
@@ -292,6 +318,17 @@ A record is `failed` after `WORKER_MAX_ATTEMPTS` failed classification attempts 
 - **Safe to repeat:** retrying a record that is no longer failed → `409`; a second (or concurrent) import retry requeues `0` more.
 - An import retry covers the records that import created; a record it only found as a duplicate belongs to the earlier import.
 
+### API collection
+
+Two ready-to-run collections, in flow order (import → progress → feedback → search → review → correct → retry → errors). Both save ids between requests.
+
+- **[`api.http`](api.http)**: VS Code (REST Client extension) or JetBrains IDEs. Set `@apiKey` at the top to the `API_KEY` in your `.env`, then click "Send Request" top to bottom.
+- **[`postman/ingestion-classification-service.postman_collection.json`](postman/ingestion-classification-service.postman_collection.json)**: import into Postman, set the collection variable `apiKey`, run the collection. Every request checks its response, and the progress request waits until the worker has finished. From the command line:
+
+  ```bash
+  npx newman run postman/ingestion-classification-service.postman_collection.json --env-var apiKey=<API_KEY>
+  ```
+
 ### Errors
 
 Every error has the same shape:
@@ -374,8 +411,6 @@ pending ──claim──▶ processing ──ok──▶ classified / needs_rev
 
 ## Database schema
 
-## Database schema
-
 | Table | Holds |
 |---|---|
 | `imports` | One per submitted batch: status and counts |
@@ -404,10 +439,9 @@ src/
   config/      env validation
   database/    data source + migrations
   api-keys/    global X-API-Key guard, @Public()
-  common/      shared error filter
+  common/      error filter, error types, query-param checks
   imports/     POST /imports, GET /imports/:id(/items), validation, duplicates
   records/     GET /records(/:id), GET /reviews, corrections, retry, RecordEntity
-  common/query.ts  shared query-param checks
   classification/ Classification entity, categories, mock classifier
   health/      GET /health
   worker/      background classification worker (own process)
@@ -421,10 +455,68 @@ tests/
   helpers/
 docker/
   postgres/init/  creates the test DB on first start
+postman/           Postman collection
+api.http           example requests (VS Code / JetBrains)
 Dockerfile         production image (multi-stage, non-root)
 docker-compose.yml postgres + migrate + api + worker
 ```
 
-## Coming next
+## Technical decisions
 
-Technical decisions, assumptions, limitations and an API request collection.
+| Decision | Why |
+|---|---|
+| **NestJS + TypeORM + PostgreSQL** | NestJS gives modules, DI and a clear request pipeline (guard, filter); TypeORM has an official Nest module and supports the two SQL features this design leans on (`SKIP LOCKED`, `ON CONFLICT`). Migrations are hand-written SQL; auto-sync is off. |
+| **Postgres as the job queue** (no Redis / broker) | The queue *is* the `records` table: a record's status says whether it needs work. Claiming with `FOR UPDATE SKIP LOCKED` lets any number of workers share it safely. One less moving part, jobs survive restarts, and status and queue can never disagree. |
+| **Worker as a separate process** | Slow classification never blocks HTTP requests; workers scale on their own (`--scale worker=N`) and can crash without taking the API down. |
+| **Duplicates decided by the DB** | A unique key on (`source`, `external_id`) plus `INSERT … ON CONFLICT DO NOTHING` is the only check that holds under concurrent imports; an app-level "look then insert" would race. Inserts are sorted so overlapping imports wait instead of deadlocking. |
+| **Duplicate vs conflict by content hash** | Same id + same content is a harmless resend; same id + different content is reported as `conflict` and the stored record is never silently overwritten. |
+| **Import = one transaction** | The import, its records and its per-item feedback are saved together or not at all: no half-imported batch. |
+| **Per-record validation, not per-batch** | One bad record doesn't block 999 good ones; each gets field-level errors. Only a malformed request (not `{ records: [...] }`, or over 1000) is refused as a whole. |
+| **Classifier called outside any transaction** | No DB locks are held during a slow call. The result is saved in one short transaction afterwards. |
+| **Claim token on every worker write** | If a slow worker's record was taken over after its lock went stale, its late result is dropped instead of saved twice. |
+| **Attempts counted at claim time** | A crash still uses up an attempt, so a record that keeps killing workers ends `failed` instead of looping forever. |
+| **Append-only classifications, enforced by a trigger** | "Preserve the original result" is guaranteed by the database, not just by code paths. Corrections are new rows pointing to what they correct; the record points to the current one. |
+| **Import status derived on read** | Counted from the records each time, so it can't go stale (e.g. after a retry). |
+| **Retry = one guarded `UPDATE … WHERE status = 'failed'`** | Idempotent and concurrency-safe by construction: nothing else can be touched, nothing is created. |
+| **Mock classifier: deterministic answers, random timing / failures** | Answers are explainable and testable; delays and failures exercise the worker's retry and recovery paths like a real flaky service would. Behind a `Classifier` interface. |
+| **Single API key from `.env`** | The assignment has no users; one key protects the API with the least setup. |
+| **One error shape** `{ error: { code, message } }` | Clients handle every error the same way; unexpected errors are logged and never leak internals. |
+| **Docker: one command** | `migrate` runs before `api` / `worker`; a fresh clone works with `docker compose up` and a `.env`. |
+
+## Assumptions
+
+- **A record's identity is (`source`, `externalId`).** The same `externalId` from two sources is two records.
+- **"Duplicate" means same identity.** Same identity and same title / description / date → `duplicate`; same identity, different content → `conflict`, reported and **not** applied (there's no rule for which version wins).
+- **All five fields are required**, as Task.txt lists them for every record. Limits (255 / 100 / 200 / 5000 chars) are reasonable caps, not given.
+- **Dates:** ISO 8601; a date without a time means midnight UTC; a date-time must carry a time zone; future dates are allowed (an "effective date" can be ahead).
+- **Categories:** `sports`, `culture`, `education`, `business`, `health`, `other`: a fixed list, since none was given. Changing it needs a migration (the DB enforces it).
+- **Manual review** is needed when confidence < 0.7, on a tie, or when nothing matched.
+- **Corrections:** any key holder may correct; a reason is required; confirming the same category is allowed.
+- **Retry** resets attempts so a recovered record gets a full set of tries.
+- **No real users and no production data**, so no data migration concerns.
+
+## Limitations
+
+- **One shared API key:** no per-user accounts, so imports and corrections aren't attributed to a person; rotating the key needs a restart.
+- **Imports up to 1000 records / 10 MB per request**, processed synchronously; bigger loads must be split by the client.
+- **Text search** (`q`) is a case-insensitive "contains" on the title only, without an index: fine at this scale, slow on millions of rows.
+- **Offset paging:** deep pages get slower, and rows added between page requests can shift results.
+- **Within one import, `/records` order is stable but not submission order** (records of an import share the same stored time).
+- **A conflict is only reported:** there's no endpoint to accept the new version.
+- **Polling, not push:** clients poll `GET /imports/:id`; there are no webhooks or events.
+- **The mock classifier** uses keyword rules, not a model.
+- **Classification metrics / tracing** aren't exported (logs only).
+
+## Possible improvements
+
+- **Per-client API keys or OAuth**, with "who imported / who corrected" recorded (the schema had it before the single-key decision).
+- **Large imports:** accept a file (CSV / NDJSON) or a URL, process it in the background and stream progress.
+- **Conflict resolution:** an endpoint to accept the incoming version, keeping the old one in history.
+- **Search:** Postgres full-text search or trigram indexes on title and description.
+- **Keyset (cursor) paging** for large lists.
+- **Webhooks / server-sent events** when an import completes or a record needs review.
+- **A real classifier** behind the `Classifier` interface, with a circuit breaker and rate limiting.
+- **Observability:** Prometheus metrics (queue depth, attempts, failure rate, review rate), structured JSON logs, tracing.
+- **Dead-letter view:** list `failed` records with their errors (today: `GET /records?status=failed`).
+- **OpenAPI / Swagger** docs generated from the code.
+- **CI:** run lint, type check, unit, integration and API-flow tests on every PR (all are already scripted).
