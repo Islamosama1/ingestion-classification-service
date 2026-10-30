@@ -83,6 +83,10 @@ The schema is changed only through migrations (`src/database/migrations/`); Type
 | `PORT` | no | `3000` | HTTP port |
 | `DATABASE_URL` | yes | – | App database (`postgres://…`) |
 | `API_KEY` | yes | – | Key clients send as `X-API-Key`; at least 16 characters |
+| `CLASSIFIER_MIN_DELAY_MS` | no | `200` | Mock classifier: shortest time per call (0–60000) |
+| `CLASSIFIER_MAX_DELAY_MS` | no | `1500` | Mock classifier: longest time per call (≥ min) |
+| `CLASSIFIER_FAILURE_RATE` | no | `0.1` | Mock classifier: chance a call fails (0–1) |
+| `REVIEW_THRESHOLD` | no | `0.7` | Results with lower confidence need manual review (0–1) |
 | `TEST_DATABASE_URL` | for integration tests | – | Test database; must differ from `DATABASE_URL` |
 | `POSTGRES_USER` | for Docker | – | Postgres user created by Docker Compose |
 | `POSTGRES_PASSWORD` | for Docker | – | Postgres password created by Docker Compose |
@@ -238,6 +242,30 @@ An import is `{ "records": [ ... ] }` with 1 to 1000 records. A body that isn't 
 - Extra fields are ignored.
 - Errors are `{ field, message }`, one per field, all bad fields reported at once.
 
+## Classification (mocked)
+
+No real AI service is used. A mock classifier stands in for one: it gives each record a category with a confidence, takes a random time, and sometimes fails, so the rest of the system has to cope with a slow, flaky service.
+
+**Categories:** `sports`, `culture`, `education`, `business`, `health`, `other`.
+
+**How it decides (deterministic keyword rules):**
+
+- Each category has a keyword list (`src/classification/keyword-rules.ts`). Words match whole and case-insensitive; some match word forms (`swim*` → swimming).
+- A keyword in the title is worth 2 points, in the description 1. The category with the most points wins.
+- Confidence = the winner's share of all points × the strength of evidence (full at 2 points), between 0 and 1.
+- **Needs review** when confidence is below `REVIEW_THRESHOLD`, when two categories tie, or when nothing matched (then the category is `other`, confidence 0).
+
+| Title / description | Result |
+|---|---|
+| "Football tournament" | `sports`, 1.0 |
+| "Saturday event" / "Near the museum" | `culture`, 0.5 → review |
+| "Football and finance" | tie → review |
+| "Community picnic" | `other`, 0 → review |
+
+**Like a real service:** every call waits a random `CLASSIFIER_MIN_DELAY_MS`–`CLASSIFIER_MAX_DELAY_MS` and fails with probability `CLASSIFIER_FAILURE_RATE` (a slow failure also takes the delay). The answer itself is always the same for the same input; only timing and failures are random.
+
+The worker depends on a `Classifier` interface, so the mock can be replaced by a real service without other changes.
+
 ## Database schema
 
 | Table | Holds |
@@ -271,7 +299,7 @@ src/
   common/      shared error filter
   imports/     POST /imports, GET /imports/:id(/items), validation, duplicates
   records/     RecordEntity
-  classification/ Classification entity, categories
+  classification/ Classification entity, categories, mock classifier
   health/      GET /health
   app.module.ts
   main.ts
