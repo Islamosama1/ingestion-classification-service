@@ -1,6 +1,9 @@
 // A query string parameter is malformed (→ 400 invalid_query).
 export class InvalidQueryError extends Error {}
 
+// A request body field is missing or wrong (→ 400 invalid_body).
+export class InvalidBodyError extends Error {}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Ids are UUIDs; anything else can't exist, so callers answer 404 without
