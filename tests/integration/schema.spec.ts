@@ -25,18 +25,9 @@ describe('Database schema (migrations on the real test DB)', () => {
     await qr.release();
   });
 
-  async function apiKey(hash = 'a'.repeat(64)): Promise<string> {
+  async function importRow(): Promise<string> {
     const [row] = await qr.query(
-      `INSERT INTO api_keys (name, key_hash) VALUES ('tester', $1) RETURNING id`,
-      [hash],
-    );
-    return row.id;
-  }
-
-  async function importRow(keyId: string): Promise<string> {
-    const [row] = await qr.query(
-      `INSERT INTO imports (api_key_id, total) VALUES ($1, 1) RETURNING id`,
-      [keyId],
+      `INSERT INTO imports (total) VALUES (1) RETURNING id`,
     );
     return row.id;
   }
@@ -69,31 +60,34 @@ describe('Database schema (migrations on the real test DB)', () => {
   }
 
   async function setup(): Promise<{
-    keyId: string;
     importId: string;
     recordId: string;
   }> {
-    const keyId = await apiKey();
-    const importId = await importRow(keyId);
+    const importId = await importRow();
     const recordId = await record(importId);
-    return { keyId, importId, recordId };
+    return { importId, recordId };
   }
 
   describe('tables', () => {
-    it('creates api_keys, imports, import_items, records, classifications', async () => {
+    it('has exactly imports, import_items, records, classifications (+ migrations)', async () => {
       const rows: { table_name: string }[] = await qr.query(
         `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
       );
-      const names = rows.map((r) => r.table_name);
-      expect(names).toEqual(
-        expect.arrayContaining([
-          'api_keys',
-          'imports',
-          'import_items',
-          'records',
-          'classifications',
-        ]),
+      expect(rows.map((r) => r.table_name).sort()).toEqual([
+        'classifications',
+        'import_items',
+        'imports',
+        'migrations',
+        'records',
+      ]);
+    });
+
+    it('has no api_key_id column anywhere (single API_KEY in env)', async () => {
+      const rows: unknown[] = await qr.query(
+        `SELECT table_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND column_name = 'api_key_id'`,
       );
+      expect(rows).toEqual([]);
     });
 
     it('entities match the migrated schema (no pending changes)', async () => {
@@ -137,8 +131,7 @@ describe('Database schema (migrations on the real test DB)', () => {
     });
 
     it('refuses a title over 200 chars', async () => {
-      const keyId = await apiKey();
-      const importId = await importRow(keyId);
+      const importId = await importRow();
       await expect(
         record(importId, { title: 'x'.repeat(201) }),
       ).rejects.toMatchObject({
@@ -228,12 +221,12 @@ describe('Database schema (migrations on the real test DB)', () => {
     });
 
     it('stores a correction linked to the original, which stays unchanged', async () => {
-      const { keyId, recordId } = await setup();
+      const { recordId } = await setup();
       const originalId = await autoClassification(recordId);
       await qr.query(
-        `INSERT INTO classifications (record_id, category, needs_review, kind, corrects_id, reason, api_key_id)
-         VALUES ($1, 'health', false, 'correction', $2, 'wrong topic', $3)`,
-        [recordId, originalId, keyId],
+        `INSERT INTO classifications (record_id, category, needs_review, kind, corrects_id, reason)
+         VALUES ($1, 'health', false, 'correction', $2, 'wrong topic')`,
+        [recordId, originalId],
       );
       const [orig] = await qr.query(
         `SELECT category, kind FROM classifications WHERE id = $1`,
@@ -242,22 +235,21 @@ describe('Database schema (migrations on the real test DB)', () => {
       expect(orig).toEqual({ category: CATEGORIES[0], kind: 'auto' });
     });
 
-    it.each(['corrects_id', 'reason', 'api_key_id'])(
+    it.each(['corrects_id', 'reason'])(
       'refuses a correction without %s',
       async (missing) => {
-        const { keyId, recordId } = await setup();
+        const { recordId } = await setup();
         const originalId = await autoClassification(recordId);
         const values: { [col: string]: string | null } = {
           corrects_id: originalId,
           reason: 'wrong topic',
-          api_key_id: keyId,
         };
         values[missing] = null;
         await expect(
           qr.query(
-            `INSERT INTO classifications (record_id, category, needs_review, kind, corrects_id, reason, api_key_id)
-             VALUES ($1, 'health', false, 'correction', $2::uuid, $3::text, $4::uuid)`,
-            [recordId, values.corrects_id, values.reason, values.api_key_id],
+            `INSERT INTO classifications (record_id, category, needs_review, kind, corrects_id, reason)
+             VALUES ($1, 'health', false, 'correction', $2::uuid, $3::text)`,
+            [recordId, values.corrects_id, values.reason],
           ),
         ).rejects.toMatchObject({ code: '23514' });
       },
@@ -310,10 +302,9 @@ describe('Database schema (migrations on the real test DB)', () => {
     });
   });
 
-  describe('imports and api_keys', () => {
+  describe('imports', () => {
     it('new import defaults to processing with zero counts', async () => {
-      const keyId = await apiKey();
-      const importId = await importRow(keyId);
+      const importId = await importRow();
       const [i] = await qr.query(
         `SELECT status, created_count, duplicate_count, conflict_count, invalid_count FROM imports WHERE id = $1`,
         [importId],
@@ -324,13 +315,6 @@ describe('Database schema (migrations on the real test DB)', () => {
         duplicate_count: 0,
         conflict_count: 0,
         invalid_count: 0,
-      });
-    });
-
-    it('refuses the same key hash twice', async () => {
-      await apiKey('b'.repeat(64));
-      await expect(apiKey('b'.repeat(64))).rejects.toMatchObject({
-        code: '23505',
       });
     });
   });

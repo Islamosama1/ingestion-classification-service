@@ -5,6 +5,9 @@ import { dataSourceOptions } from '../../src/database/data-source';
 
 // Points the app at the test DB. The URL comes only from the environment
 // (shell or local .env, never committed), and must not be the dev DB.
+// Fixed key for tests, so they don't depend on the developer's .env.
+export const TEST_API_KEY = 'test-api-key-0000';
+
 let applied = false;
 
 export function useTestDatabase(): void {
@@ -30,6 +33,7 @@ export function useTestDatabase(): void {
 
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = url;
+  process.env.API_KEY = TEST_API_KEY;
   applied = true;
 }
 

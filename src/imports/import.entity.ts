@@ -3,13 +3,9 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
-  Relation,
   UpdateDateColumn,
 } from 'typeorm';
-import { ApiKey } from '../api-keys/api-key.entity';
 
 export const IMPORT_STATUSES = ['processing', 'completed'] as const;
 export type ImportStatus = (typeof IMPORT_STATUSES)[number];
@@ -23,16 +19,6 @@ export type ImportStatus = (typeof IMPORT_STATUSES)[number];
 export class Import {
   @PrimaryGeneratedColumn('uuid', { primaryKeyConstraintName: 'PK_imports' })
   id!: string;
-
-  @Column({ name: 'api_key_id', type: 'uuid' })
-  apiKeyId!: string;
-
-  @ManyToOne(() => ApiKey)
-  @JoinColumn({
-    name: 'api_key_id',
-    foreignKeyConstraintName: 'FK_imports_api_key',
-  })
-  apiKey?: Relation<ApiKey>;
 
   @Column({ type: 'text', default: 'processing' })
   status!: ImportStatus;
