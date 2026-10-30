@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { RawQuery } from '../common/query';
 import { parseCorrectionBody } from './correction-body';
 import { CorrectionsService } from './corrections.service';
@@ -9,12 +18,14 @@ import {
   RecordsPage,
   RecordsService,
 } from './records.service';
+import { RetryService } from './retry.service';
 
 @Controller('records')
 export class RecordsController {
   constructor(
     private readonly records: RecordsService,
     private readonly corrections: CorrectionsService,
+    private readonly retries: RetryService,
   ) {}
 
   @Get()
@@ -36,5 +47,14 @@ export class RecordsController {
     @Body() body: unknown,
   ): Promise<RecordView & { history: HistoryEntry[] }> {
     return this.corrections.correct(id, parseCorrectionBody(body));
+  }
+
+  // 202: queued again; the worker classifies it in the background.
+  @Post(':id/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  retry(
+    @Param('id') id: string,
+  ): Promise<RecordView & { history: HistoryEntry[] }> {
+    return this.retries.retryRecord(id);
   }
 }

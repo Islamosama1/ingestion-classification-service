@@ -2,7 +2,7 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history; results needing manual review are listed in a review queue and can be corrected (the original result is kept). Retry endpoints are being built.
+> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history; results needing manual review are listed in a review queue and can be corrected (the original result is kept); failed records can be recovered without duplicating data or repeating successful work.
 
 ## Stack
 
@@ -277,6 +277,21 @@ curl -X POST http://localhost:3000/records/<id>/corrections \
 | Unknown record | `404` |
 | Record not classified yet (`pending`, `processing`, `failed`) | `409 conflict` |
 
+### Recovering failed records
+
+A record is `failed` after `WORKER_MAX_ATTEMPTS` failed classification attempts (e.g. the service was down). Once the cause is fixed, put it back in the queue:
+
+| Endpoint | Does | Response |
+|---|---|---|
+| `POST /records/:id/retry` | Requeues one `failed` record | `202` + the record (as `GET /records/:id`) |
+| `POST /imports/:id/retry` | Requeues every `failed` record that import created | `202 { "importId": "…", "requeued": 3 }` |
+
+- A requeued record goes back to `pending` with **attempts reset to 0** and is due at once; the worker classifies it as usual. Its `lastError` stays visible until the next attempt.
+- **No duplicated data:** no record or classification is created by a retry.
+- **No repeated work:** only `failed` records are touched; `classified`, `needs_review`, `pending` and `processing` ones are left exactly as they are.
+- **Safe to repeat:** retrying a record that is no longer failed → `409`; a second (or concurrent) import retry requeues `0` more.
+- An import retry covers the records that import created; a record it only found as a duplicate belongs to the earlier import.
+
 ### Errors
 
 Every error has the same shape:
@@ -293,7 +308,7 @@ Every error has the same shape:
 | 400 | `invalid_body` | A body field is missing or wrong (e.g. unknown category) |
 | 401 | `unauthorized` | Missing or wrong `X-API-Key` |
 | 404 | `not_found` | Unknown route or id |
-| 409 | `conflict` | The action doesn't fit the record's state (e.g. correcting an unclassified record) |
+| 409 | `conflict` | The action doesn't fit the record's state (e.g. correcting an unclassified record, retrying one that isn't failed) |
 | 413 | `payload_too_large` | Body over 10 MB |
 | 500 | `internal_error` | Unexpected error (details are logged, never returned) |
 
@@ -391,7 +406,7 @@ src/
   api-keys/    global X-API-Key guard, @Public()
   common/      shared error filter
   imports/     POST /imports, GET /imports/:id(/items), validation, duplicates
-  records/     GET /records(/:id), GET /reviews, corrections, RecordEntity
+  records/     GET /records(/:id), GET /reviews, corrections, retry, RecordEntity
   common/query.ts  shared query-param checks
   classification/ Classification entity, categories, mock classifier
   health/      GET /health
@@ -412,4 +427,4 @@ docker-compose.yml postgres + migrate + api + worker
 
 ## Coming next
 
-Recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
+Technical decisions, assumptions, limitations and an API request collection.
