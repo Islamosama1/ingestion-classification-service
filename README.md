@@ -2,7 +2,7 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection, and an import's progress and per-record feedback can be read. Classification and the rest of the API are being built.
+> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read. Record search, manual review, corrections and retry endpoints are being built.
 
 ## Stack
 
@@ -37,7 +37,7 @@ curl -H "X-API-Key: <API_KEY from .env>" http://localhost:3000/...
 
 Stop with `docker compose down` (add `-v` to also delete the database).
 
-On every start a one-off `migrate` container applies pending migrations and exits; the `api` container (compiled app, non-root user) starts only after that succeeds.
+On every start a one-off `migrate` container applies pending migrations and exits; the `api` and `worker` containers (compiled app, non-root user) start only after that succeeds. The `worker` classifies imported records in the background; run more of them with `docker compose up -d --scale worker=3`.
 
 ## Local development
 
@@ -87,6 +87,12 @@ The schema is changed only through migrations (`src/database/migrations/`); Type
 | `CLASSIFIER_MAX_DELAY_MS` | no | `1500` | Mock classifier: longest time per call (≥ min) |
 | `CLASSIFIER_FAILURE_RATE` | no | `0.1` | Mock classifier: chance a call fails (0–1) |
 | `REVIEW_THRESHOLD` | no | `0.7` | Results with lower confidence need manual review (0–1) |
+| `WORKER_BATCH_SIZE` | no | `10` | Records a worker claims per round, classified in parallel (1–100) |
+| `WORKER_POLL_INTERVAL_MS` | no | `1000` | Wait before looking again when nothing is due |
+| `WORKER_MAX_ATTEMPTS` | no | `5` | Attempts per record before it is `failed` (1–20) |
+| `WORKER_RETRY_BASE_MS` | no | `2000` | First retry wait; doubles after each failed attempt |
+| `WORKER_RETRY_MAX_MS` | no | `60000` | Longest retry wait (≥ base) |
+| `WORKER_STALE_LOCK_MS` | no | `60000` | A record locked longer is taken over (crashed worker); must be above `CLASSIFIER_MAX_DELAY_MS` |
 | `TEST_DATABASE_URL` | for integration tests | – | Test database; must differ from `DATABASE_URL` |
 | `POSTGRES_USER` | for Docker | – | Postgres user created by Docker Compose |
 | `POSTGRES_PASSWORD` | for Docker | – | Postgres password created by Docker Compose |
@@ -97,10 +103,12 @@ The app checks these at startup and refuses to start if any are missing or inval
 ### Run
 
 ```bash
-npm run start:dev        # watch mode
+npm run start:dev          # API, watch mode
+npm run start:worker:dev   # worker, watch mode (second terminal)
 # or
 npm run build
-npm start
+npm start                  # API
+npm run start:worker       # worker
 ```
 
 Check it's up:
@@ -266,6 +274,26 @@ No real AI service is used. A mock classifier stands in for one: it gives each r
 
 The worker depends on a `Classifier` interface, so the mock can be replaced by a real service without other changes.
 
+## Background worker
+
+A separate process (`worker` container) classifies records. Its life cycle for each record:
+
+```
+pending ──claim──▶ processing ──ok──▶ classified / needs_review
+   ▲                  │
+   └──retry later─────┤ failed attempt (attempts < max)
+                      └──────────────▶ failed (attempts = max)
+```
+
+- **No double work:** records are claimed with `SELECT … FOR UPDATE SKIP LOCKED`, so any number of workers never take the same record. Records that are `classified`, `needs_review` or `failed` are never picked up again.
+- **Short transactions:** the slow classifier call happens outside any transaction; the result and the record's new status are then saved together in one short transaction.
+- **Retries:** a failed call puts the record back to `pending` with `last_error` and a wait that doubles each time (`WORKER_RETRY_BASE_MS` … `WORKER_RETRY_MAX_MS`). After `WORKER_MAX_ATTEMPTS` the record is `failed`.
+- **Crash recovery:** an attempt is counted when a record is claimed. A record left in `processing` longer than `WORKER_STALE_LOCK_MS` (worker crashed or was killed) is claimed again, or `failed` if it has no attempts left.
+- **No double results:** every write checks the claim. A late result from a worker whose record was taken over is dropped, so a record never gets two automatic results for one claim.
+- **Graceful stop:** on `docker stop` / Ctrl+C the worker stops claiming and finishes the current round.
+
+## Database schema
+
 ## Database schema
 
 | Table | Holds |
@@ -301,8 +329,10 @@ src/
   records/     RecordEntity
   classification/ Classification entity, categories, mock classifier
   health/      GET /health
+  worker/      background classification worker (own process)
+  core.module.ts  config + DB, shared by API and worker
   app.module.ts
-  main.ts
+  main.ts      API entry
 tests/
   unit/        fast tests, fake DB
   integration/ real test DB
@@ -311,9 +341,9 @@ tests/
 docker/
   postgres/init/  creates the test DB on first start
 Dockerfile         production image (multi-stage, non-root)
-docker-compose.yml postgres + migrate + api
+docker-compose.yml postgres + migrate + api + worker
 ```
 
 ## Coming next
 
-Background classification with retries, record search, manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
+Record search, manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.

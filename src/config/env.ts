@@ -55,6 +55,41 @@ class EnvSchema {
   @Min(0)
   @Max(1)
   REVIEW_THRESHOLD: number = 0.7;
+
+  // Worker: records claimed per round (also classified in parallel).
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  WORKER_BATCH_SIZE: number = 10;
+
+  // Wait before looking again when nothing is due.
+  @IsInt()
+  @Min(10)
+  @Max(600000)
+  WORKER_POLL_INTERVAL_MS: number = 1000;
+
+  // Attempts per record before it is marked failed.
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  WORKER_MAX_ATTEMPTS: number = 5;
+
+  // Retry wait doubles after each failed attempt, from base up to max.
+  @IsInt()
+  @Min(0)
+  @Max(86400000)
+  WORKER_RETRY_BASE_MS: number = 2000;
+
+  @IsInt()
+  @Min(0)
+  @Max(86400000)
+  WORKER_RETRY_MAX_MS: number = 60000;
+
+  // A record locked longer than this is treated as abandoned (worker crash).
+  @IsInt()
+  @Min(1)
+  @Max(86400000)
+  WORKER_STALE_LOCK_MS: number = 60000;
 }
 
 const KEYS = [
@@ -66,6 +101,12 @@ const KEYS = [
   'CLASSIFIER_MAX_DELAY_MS',
   'CLASSIFIER_FAILURE_RATE',
   'REVIEW_THRESHOLD',
+  'WORKER_BATCH_SIZE',
+  'WORKER_POLL_INTERVAL_MS',
+  'WORKER_MAX_ATTEMPTS',
+  'WORKER_RETRY_BASE_MS',
+  'WORKER_RETRY_MAX_MS',
+  'WORKER_STALE_LOCK_MS',
 ] as const;
 
 export type Env = Pick<EnvSchema, (typeof KEYS)[number]>;
@@ -82,6 +123,17 @@ export function validateEnv(raw: Record<string, unknown>): Env {
   if (env.CLASSIFIER_MAX_DELAY_MS < env.CLASSIFIER_MIN_DELAY_MS) {
     problems.push(
       'CLASSIFIER_MAX_DELAY_MS: must not be below CLASSIFIER_MIN_DELAY_MS',
+    );
+  }
+  if (env.WORKER_RETRY_MAX_MS < env.WORKER_RETRY_BASE_MS) {
+    problems.push(
+      'WORKER_RETRY_MAX_MS: must not be below WORKER_RETRY_BASE_MS',
+    );
+  }
+  // Otherwise a slow but healthy call would be taken over by another worker.
+  if (env.WORKER_STALE_LOCK_MS <= env.CLASSIFIER_MAX_DELAY_MS) {
+    problems.push(
+      'WORKER_STALE_LOCK_MS: must be above CLASSIFIER_MAX_DELAY_MS',
     );
   }
   if (problems.length > 0) {
