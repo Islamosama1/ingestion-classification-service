@@ -32,6 +32,7 @@ services:
     environment: &app-env
       NODE_ENV: production
       PORT: 3000
+      API_KEY: ${API_KEY:?set API_KEY in .env}
       # Inside Docker the DB is reached by service name, not localhost.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ingestion
     depends_on:

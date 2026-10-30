@@ -9,7 +9,6 @@ import {
   PrimaryGeneratedColumn,
   Relation,
 } from 'typeorm';
-import { ApiKey } from '../api-keys/api-key.entity';
 import { RecordEntity } from '../records/record.entity';
 import { Category } from './categories';
 
@@ -30,7 +29,7 @@ export type ClassificationKind = 'auto' | 'correction';
 @Check(
   'CHK_classifications_kind',
   `(kind = 'auto' AND confidence IS NOT NULL AND corrects_id IS NULL)
-   OR (kind = 'correction' AND corrects_id IS NOT NULL AND reason IS NOT NULL AND api_key_id IS NOT NULL)`,
+   OR (kind = 'correction' AND corrects_id IS NOT NULL AND reason IS NOT NULL)`,
 )
 export class Classification {
   @PrimaryGeneratedColumn('uuid', {
@@ -73,17 +72,6 @@ export class Classification {
 
   @Column({ type: 'text', nullable: true })
   reason!: string | null;
-
-  // Who corrected (corrections only).
-  @Column({ name: 'api_key_id', type: 'uuid', nullable: true })
-  apiKeyId!: string | null;
-
-  @ManyToOne(() => ApiKey)
-  @JoinColumn({
-    name: 'api_key_id',
-    foreignKeyConstraintName: 'FK_classifications_api_key',
-  })
-  apiKey?: Relation<ApiKey>;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

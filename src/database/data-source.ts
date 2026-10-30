@@ -1,21 +1,15 @@
 import 'reflect-metadata';
 import { DataSourceOptions } from 'typeorm';
-import { ApiKey } from '../api-keys/api-key.entity';
 import { Classification } from '../classification/classification.entity';
 import { ImportItem } from '../imports/import-item.entity';
 import { Import } from '../imports/import.entity';
 import { RecordEntity } from '../records/record.entity';
 import { InitialSchema1761800000000 } from './migrations/1761800000000-InitialSchema';
+import { DropApiKeys1761900000000 } from './migrations/1761900000000-DropApiKeys';
 
-export const ENTITIES = [
-  ApiKey,
-  Import,
-  ImportItem,
-  RecordEntity,
-  Classification,
-];
+export const ENTITIES = [Import, ImportItem, RecordEntity, Classification];
 
-const MIGRATIONS = [InitialSchema1761800000000];
+const MIGRATIONS = [InitialSchema1761800000000, DropApiKeys1761900000000];
 
 // Shared by the app, the migration CLI and tests.
 export function dataSourceOptions(url: string): DataSourceOptions {
