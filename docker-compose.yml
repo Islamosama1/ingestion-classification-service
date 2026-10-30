@@ -17,18 +17,35 @@ services:
       timeout: 3s
       retries: 10
 
-  api:
+  # One-off: applies pending migrations, then exits. api waits for it.
+  migrate:
     build: .
-    environment:
+    image: ingestion-classification-service:local
+    command:
+      [
+        'node',
+        'node_modules/typeorm/cli.js',
+        'migration:run',
+        '-d',
+        'dist/database/cli-data-source.js',
+      ]
+    environment: &app-env
       NODE_ENV: production
       PORT: 3000
       # Inside Docker the DB is reached by service name, not localhost.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ingestion
-    ports:
-      - '${PORT:-3000}:3000'
     depends_on:
       postgres:
         condition: service_healthy
+
+  api:
+    image: ingestion-classification-service:local
+    environment: *app-env
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/health || exit 1']
       interval: 10s
