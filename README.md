@@ -2,7 +2,7 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** setup, database schema and API key protection done. The service starts, applies migrations, answers `GET /health` and refuses any other request without the API key. Imports, classification and the rest of the API are being built.
+> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection. Import progress, classification and the rest of the API are being built.
 
 ## Stack
 
@@ -124,6 +124,69 @@ Integration tests always use `TEST_DATABASE_URL` (set before the app loads) and 
 - The key is compared in constant time.
 - One shared key: there are no per-user accounts, so actions are not attributed to a person.
 
+## API
+
+All requests except `GET /health` need `X-API-Key`. Bodies are JSON, up to 10 MB.
+
+### `POST /imports`: submit records
+
+```bash
+curl -X POST http://localhost:3000/imports \
+  -H "X-API-Key: <API_KEY>" -H "Content-Type: application/json" \
+  -d '{"records": [
+        {"externalId": "e-1", "source": "partner-a", "title": "Football camp",
+         "description": "Summer camp for kids", "date": "2026-07-01"},
+        {"externalId": "e-2", "source": "partner-a", "title": "",
+         "description": "No title", "date": "2026-02-30"}
+      ]}'
+```
+
+`202 Accepted`: records are stored now; classification runs in the background.
+
+```json
+{
+  "importId": "7c1e…",
+  "status": "processing",
+  "total": 2, "created": 1, "duplicate": 0, "conflict": 0, "invalid": 1,
+  "items": [
+    { "index": 0, "outcome": "created", "externalId": "e-1", "source": "partner-a", "recordId": "a41f…" },
+    { "index": 1, "outcome": "invalid", "externalId": "e-2", "source": "partner-a", "recordId": null,
+      "errors": [
+        { "field": "title", "message": "title is required" },
+        { "field": "date", "message": "date must be an ISO 8601 date (2026-07-01) or date-time with time zone (2026-07-01T10:30:00Z)" }
+      ] }
+  ]
+}
+```
+
+| Outcome | Meaning | `recordId` |
+|---|---|---|
+| `created` | New record stored, queued for classification | the new record |
+| `duplicate` | Same `source` + `externalId` already stored (or earlier in this batch) with the same content; nothing changed | the existing record |
+| `conflict` | Same `source` + `externalId`, **different** content; the stored record is kept as is | the existing record |
+| `invalid` | Failed validation; see `errors` | `null` |
+
+- `status` is `processing` when something was created (it will be classified), otherwise `completed`.
+- Duplicate detection is safe under concurrent imports: the database's unique key decides, so two imports of the same record at once create it once.
+- An import is all-or-nothing: the import, its records and its per-item feedback are saved in one transaction.
+
+### Errors
+
+Every error has the same shape:
+
+```json
+{ "error": { "code": "invalid_batch", "message": "\"records\" must contain at most 1000 records" } }
+```
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_batch` | Body isn't `{ "records": [...] }` with 1–1000 items |
+| 400 | `invalid_json` | Body isn't valid JSON |
+| 401 | `unauthorized` | Missing or wrong `X-API-Key` |
+| 404 | `not_found` | Unknown route or id |
+| 413 | `payload_too_large` | Body over 10 MB |
+| 500 | `internal_error` | Unexpected error (details are logged, never returned) |
+
 ## Record validation
 
 An import is `{ "records": [ ... ] }` with 1 to 1000 records. A body that isn't that shape is refused as a whole. Otherwise each record is checked on its own: one bad record doesn't block the others, and each gets its own field errors.
@@ -172,7 +235,8 @@ src/
   config/      env validation
   database/    data source + migrations
   api-keys/    global X-API-Key guard, @Public()
-  imports/     Import, ImportItem entities
+  common/      shared error filter
+  imports/     POST /imports, validation, duplicate detection
   records/     RecordEntity
   classification/ Classification entity, categories
   health/      GET /health
@@ -191,4 +255,4 @@ docker-compose.yml postgres + migrate + api
 
 ## Coming next
 
-Imports with validation and duplicate detection, import progress, background classification with retries, record search, manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
+Import progress, background classification with retries, record search, manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
