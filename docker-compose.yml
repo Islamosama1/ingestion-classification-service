@@ -33,6 +33,10 @@ services:
       NODE_ENV: production
       PORT: 3000
       API_KEY: ${API_KEY:?set API_KEY in .env}
+      CLASSIFIER_MIN_DELAY_MS: ${CLASSIFIER_MIN_DELAY_MS:-200}
+      CLASSIFIER_MAX_DELAY_MS: ${CLASSIFIER_MAX_DELAY_MS:-1500}
+      CLASSIFIER_FAILURE_RATE: ${CLASSIFIER_FAILURE_RATE:-0.1}
+      REVIEW_THRESHOLD: ${REVIEW_THRESHOLD:-0.7}
       # Inside Docker the DB is reached by service name, not localhost.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ingestion
     depends_on:

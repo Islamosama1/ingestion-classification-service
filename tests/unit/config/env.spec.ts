@@ -14,6 +14,63 @@ describe('validateEnv', () => {
       PORT: 3000,
       DATABASE_URL: 'postgres://localhost:5432/ingestion',
       API_KEY: 'test-api-key-0000',
+      CLASSIFIER_MIN_DELAY_MS: 200,
+      CLASSIFIER_MAX_DELAY_MS: 1500,
+      CLASSIFIER_FAILURE_RATE: 0.1,
+      REVIEW_THRESHOLD: 0.7,
+    });
+  });
+
+  describe('classifier settings', () => {
+    it('reads numbers from strings', () => {
+      expect(
+        validateEnv({
+          ...valid,
+          CLASSIFIER_MIN_DELAY_MS: '0',
+          CLASSIFIER_MAX_DELAY_MS: '50',
+          CLASSIFIER_FAILURE_RATE: '0.25',
+          REVIEW_THRESHOLD: '0.9',
+        }),
+      ).toMatchObject({
+        CLASSIFIER_MIN_DELAY_MS: 0,
+        CLASSIFIER_MAX_DELAY_MS: 50,
+        CLASSIFIER_FAILURE_RATE: 0.25,
+        REVIEW_THRESHOLD: 0.9,
+      });
+    });
+
+    it.each([
+      ['CLASSIFIER_FAILURE_RATE', '0'],
+      ['CLASSIFIER_FAILURE_RATE', '1'],
+      ['REVIEW_THRESHOLD', '0'],
+      ['REVIEW_THRESHOLD', '1'],
+    ])('accepts %s=%s (range ends)', (name, value) => {
+      expect(() => validateEnv({ ...valid, [name]: value })).not.toThrow();
+    });
+
+    it.each([
+      ['CLASSIFIER_MIN_DELAY_MS', '-1'],
+      ['CLASSIFIER_MIN_DELAY_MS', '1.5'],
+      ['CLASSIFIER_MAX_DELAY_MS', 'slow'],
+      ['CLASSIFIER_MAX_DELAY_MS', '60001'],
+      ['CLASSIFIER_FAILURE_RATE', '-0.1'],
+      ['CLASSIFIER_FAILURE_RATE', '1.5'],
+      ['REVIEW_THRESHOLD', '2'],
+      ['REVIEW_THRESHOLD', 'high'],
+    ])('refuses %s=%s and names it', (name, value) => {
+      expect(() => validateEnv({ ...valid, [name]: value })).toThrow(
+        new RegExp(name),
+      );
+    });
+
+    it('refuses a max delay below the min delay', () => {
+      expect(() =>
+        validateEnv({
+          ...valid,
+          CLASSIFIER_MIN_DELAY_MS: '500',
+          CLASSIFIER_MAX_DELAY_MS: '100',
+        }),
+      ).toThrow(/CLASSIFIER_MAX_DELAY_MS/);
     });
   });
 
