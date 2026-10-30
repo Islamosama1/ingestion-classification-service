@@ -2,7 +2,7 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection. Import progress, classification and the rest of the API are being built.
+> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection, and an import's progress and per-record feedback can be read. Classification and the rest of the API are being built.
 
 ## Stack
 
@@ -170,6 +170,38 @@ curl -X POST http://localhost:3000/imports \
 - Duplicate detection is safe under concurrent imports: the database's unique key decides, so two imports of the same record at once create it once.
 - An import is all-or-nothing: the import, its records and its per-item feedback are saved in one transaction.
 
+### `GET /imports/:id`: progress and outcome of an import
+
+```json
+{
+  "importId": "7c1e…",
+  "status": "processing",
+  "createdAt": "2026-10-30T09:12:44.120Z",
+  "total": 6, "created": 3, "duplicate": 1, "conflict": 1, "invalid": 1,
+  "classification": { "pending": 1, "processing": 1, "classified": 1, "needsReview": 0, "failed": 0 }
+}
+```
+
+- `classification` counts the records **this import created** (not duplicates of older records), by classification stage.
+- `status` is worked out from those records on every read, so it's never stale: `processing` while any is `pending` or `processing`, otherwise `completed`. `failed` counts as finished; retrying a failed record makes the import `processing` again.
+- Unknown id (or not a UUID) → `404`.
+
+### `GET /imports/:id/items`: per-record feedback
+
+`?outcome=created|duplicate|conflict|invalid` (optional), `?limit=` (1–1000, default 100), `?offset=` (default 0). Items are in submission order.
+
+```json
+{
+  "items": [
+    { "index": 3, "outcome": "invalid", "externalId": "d", "source": "partner-a", "recordId": null,
+      "errors": [{ "field": "title", "message": "title is required" }] }
+  ],
+  "total": 1, "limit": 100, "offset": 0
+}
+```
+
+`total` is the count for the filter, for paging. A bad `outcome`, `limit` or `offset` → `400 invalid_query`.
+
 ### Errors
 
 Every error has the same shape:
@@ -182,6 +214,7 @@ Every error has the same shape:
 |---|---|---|
 | 400 | `invalid_batch` | Body isn't `{ "records": [...] }` with 1–1000 items |
 | 400 | `invalid_json` | Body isn't valid JSON |
+| 400 | `invalid_query` | A query parameter is malformed (e.g. `limit=0`) |
 | 401 | `unauthorized` | Missing or wrong `X-API-Key` |
 | 404 | `not_found` | Unknown route or id |
 | 413 | `payload_too_large` | Body over 10 MB |
@@ -236,7 +269,7 @@ src/
   database/    data source + migrations
   api-keys/    global X-API-Key guard, @Public()
   common/      shared error filter
-  imports/     POST /imports, validation, duplicate detection
+  imports/     POST /imports, GET /imports/:id(/items), validation, duplicates
   records/     RecordEntity
   classification/ Classification entity, categories
   health/      GET /health
@@ -255,4 +288,4 @@ docker-compose.yml postgres + migrate + api
 
 ## Coming next
 
-Import progress, background classification with retries, record search, manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
+Background classification with retries, record search, manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
