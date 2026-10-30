@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { InvalidBatchError } from '../imports/record-validation';
+import { InvalidQueryError } from './errors';
 
 const CODES: { [status: number]: string } = {
   400: 'bad_request',
@@ -35,6 +36,9 @@ export class ErrorFilter implements ExceptionFilter {
   private describe(e: unknown): [number, string, string] {
     if (e instanceof InvalidBatchError) {
       return [HttpStatus.BAD_REQUEST, 'invalid_batch', e.message];
+    }
+    if (e instanceof InvalidQueryError) {
+      return [HttpStatus.BAD_REQUEST, 'invalid_query', e.message];
     }
     if (e instanceof HttpException) {
       const status = e.getStatus();
