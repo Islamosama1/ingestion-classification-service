@@ -2,7 +2,7 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history. Manual review, corrections and retry endpoints are being built.
+> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history; results needing manual review are listed in a review queue. Corrections and retry endpoints are being built.
 
 ## Stack
 
@@ -253,6 +253,10 @@ Newest stored first. A bad param → `400 invalid_query`.
 
 Same fields as a list item, plus `history`: every classification the record ever had, oldest first (automatic results and corrections, each with `kind`, `correctsId`, `reason`). The current one is in `classification`. Unknown id → `404`.
 
+### `GET /reviews`: the manual review queue
+
+Records whose classification needs a person (`status: needs_review`), **longest waiting first** (by when they were flagged). Items and paging are the same as `/records`; the `/records` filters (`source`, `category`, `importId`, `from`, `to`, `q`) also work here. `status` and `needsReview` are refused (`400`): the list is review-only by definition. A record leaves the queue once it no longer needs review (e.g. after a correction).
+
 ### Errors
 
 Every error has the same shape:
@@ -365,7 +369,7 @@ src/
   api-keys/    global X-API-Key guard, @Public()
   common/      shared error filter
   imports/     POST /imports, GET /imports/:id(/items), validation, duplicates
-  records/     GET /records(/:id), RecordEntity
+  records/     GET /records(/:id), GET /reviews, RecordEntity
   common/query.ts  shared query-param checks
   classification/ Classification entity, categories, mock classifier
   health/      GET /health
@@ -386,4 +390,4 @@ docker-compose.yml postgres + migrate + api + worker
 
 ## Coming next
 
-Manual review, corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
+Corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
