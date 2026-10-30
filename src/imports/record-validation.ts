@@ -38,7 +38,7 @@ const ISO_DATE =
 const DATE_MESSAGE =
   'date must be an ISO 8601 date (2026-07-01) or date-time with time zone (2026-07-01T10:30:00Z)';
 
-function parseIsoDate(value: string): Date | null {
+export function parseIsoDate(value: string): Date | null {
   const m = ISO_DATE.exec(value);
   if (!m) return null;
   const [, y, mo, d, h, mi, s, oh, om] = m.map(Number);
