@@ -1,9 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
+import { DataSource } from 'typeorm';
+import { dataSourceOptions } from '../../src/database/data-source';
 
 // Points the app at the test DB. The URL comes only from the environment
 // (shell or local .env, never committed), and must not be the dev DB.
+let applied = false;
+
 export function useTestDatabase(): void {
+  // Once switched, DATABASE_URL is the test URL; checking again would misfire.
+  if (applied) return;
+
   // Jest gives tests their own process.env, so copy .env values in by hand.
   // Shell values win over .env.
   if (existsSync('.env')) {
@@ -23,4 +30,15 @@ export function useTestDatabase(): void {
 
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = url;
+  applied = true;
+}
+
+// Empties the test DB and runs every migration from scratch.
+export async function freshMigratedDataSource(): Promise<DataSource> {
+  useTestDatabase();
+  const ds = new DataSource(dataSourceOptions(process.env.DATABASE_URL!));
+  await ds.initialize();
+  await ds.dropDatabase();
+  await ds.runMigrations();
+  return ds;
 }
