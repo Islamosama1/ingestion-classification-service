@@ -1,5 +1,7 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { RawQuery } from '../common/query';
+import { parseCorrectionBody } from './correction-body';
+import { CorrectionsService } from './corrections.service';
 import { parseRecordsQuery } from './records-query';
 import {
   HistoryEntry,
@@ -10,7 +12,10 @@ import {
 
 @Controller('records')
 export class RecordsController {
-  constructor(private readonly records: RecordsService) {}
+  constructor(
+    private readonly records: RecordsService,
+    private readonly corrections: CorrectionsService,
+  ) {}
 
   @Get()
   list(@Query() query: RawQuery): Promise<RecordsPage> {
@@ -22,5 +27,14 @@ export class RecordsController {
     @Param('id') id: string,
   ): Promise<RecordView & { history: HistoryEntry[] }> {
     return this.records.get(id);
+  }
+
+  // 201 with the record as GET /records/:id would now return it.
+  @Post(':id/corrections')
+  correct(
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ): Promise<RecordView & { history: HistoryEntry[] }> {
+    return this.corrections.correct(id, parseCorrectionBody(body));
   }
 }

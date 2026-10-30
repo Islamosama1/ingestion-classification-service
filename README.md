@@ -2,7 +2,7 @@
 
 A backend service that imports records from external sources, validates and stores them, and assigns each one a category in the background.
 
-> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history; results needing manual review are listed in a review queue. Corrections and retry endpoints are being built.
+> **Status:** records can be imported (`POST /imports`) with validation and duplicate / conflict detection; a background worker classifies them with retries and crash recovery; an import's progress and per-record feedback can be read; stored records can be searched and read with their classification history; results needing manual review are listed in a review queue and can be corrected (the original result is kept). Retry endpoints are being built.
 
 ## Stack
 
@@ -257,6 +257,26 @@ Same fields as a list item, plus `history`: every classification the record ever
 
 Records whose classification needs a person (`status: needs_review`), **longest waiting first** (by when they were flagged). Items and paging are the same as `/records`; the `/records` filters (`source`, `category`, `importId`, `from`, `to`, `q`) also work here. `status` and `needsReview` are refused (`400`): the list is review-only by definition. A record leaves the queue once it no longer needs review (e.g. after a correction).
 
+### `POST /records/:id/corrections`: correct a classification
+
+```bash
+curl -X POST http://localhost:3000/records/<id>/corrections \
+  -H "X-API-Key: <API_KEY>" -H "Content-Type: application/json" \
+  -d '{"category": "health", "reason": "It is a clinic open day"}'
+```
+
+`201` with the record as `GET /records/:id` now returns it:
+
+- The correction is saved as a **new** classification (`kind: "correction"`, `correctsId` → the result it corrects, `reason`, `confidence: null`). The original is never changed or deleted; it stays in `history`.
+- The correction becomes the current classification; the record's status becomes `classified`, so it leaves the review queue.
+- Keeping the same category is allowed (it confirms the result). A correction can be corrected again; each one points to the previous, so the full chain is kept. Concurrent corrections of one record are applied one after the other, none is lost.
+
+| Case | Response |
+|---|---|
+| `category` not one of the 6, or `reason` missing / empty / over 1000 chars | `400 invalid_body` (checked first) |
+| Unknown record | `404` |
+| Record not classified yet (`pending`, `processing`, `failed`) | `409 conflict` |
+
 ### Errors
 
 Every error has the same shape:
@@ -270,8 +290,10 @@ Every error has the same shape:
 | 400 | `invalid_batch` | Body isn't `{ "records": [...] }` with 1–1000 items |
 | 400 | `invalid_json` | Body isn't valid JSON |
 | 400 | `invalid_query` | A query parameter is malformed (e.g. `limit=0`) |
+| 400 | `invalid_body` | A body field is missing or wrong (e.g. unknown category) |
 | 401 | `unauthorized` | Missing or wrong `X-API-Key` |
 | 404 | `not_found` | Unknown route or id |
+| 409 | `conflict` | The action doesn't fit the record's state (e.g. correcting an unclassified record) |
 | 413 | `payload_too_large` | Body over 10 MB |
 | 500 | `internal_error` | Unexpected error (details are logged, never returned) |
 
@@ -369,7 +391,7 @@ src/
   api-keys/    global X-API-Key guard, @Public()
   common/      shared error filter
   imports/     POST /imports, GET /imports/:id(/items), validation, duplicates
-  records/     GET /records(/:id), GET /reviews, RecordEntity
+  records/     GET /records(/:id), GET /reviews, corrections, RecordEntity
   common/query.ts  shared query-param checks
   classification/ Classification entity, categories, mock classifier
   health/      GET /health
@@ -390,4 +412,4 @@ docker-compose.yml postgres + migrate + api + worker
 
 ## Coming next
 
-Corrections and recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
+Recovery of failed records. Technical decisions, assumptions, limitations and example API requests will be added here as they're built.
