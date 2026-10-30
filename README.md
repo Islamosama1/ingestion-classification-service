@@ -12,12 +12,34 @@ A backend service that imports records from external sources, validates and stor
 - TypeORM
 - Jest + Supertest
 
-## Prerequisites
+## Run with Docker only
+
+Needs only Docker (no Node.js).
+
+```bash
+git clone https://github.com/Islamosama1/ingestion-classification-service.git
+cd ingestion-classification-service
+
+cp .env.example .env
+# Replace every CHANGE_ME in .env with the same password (letters and digits).
+
+docker compose up -d --build --wait
+curl http://localhost:3000/health
+# {"status":"ok","db":"up"}
+```
+
+Stop with `docker compose down` (add `-v` to also delete the database).
+
+The `api` container runs the compiled app as a non-root user and starts only after Postgres is healthy.
+
+## Local development
+
+### Prerequisites
 
 - Node.js 20 or newer
 - Docker Desktop (or Docker Engine with Compose)
 
-## Setup
+### Setup
 
 ```bash
 # 1. Install dependencies
@@ -27,8 +49,8 @@ npm install
 cp .env.example .env
 #    Replace every CHANGE_ME in .env with the same password.
 
-# 3. Start PostgreSQL (creates the "ingestion" and "ingestion_test" databases)
-docker compose up -d --wait
+# 3. Start only PostgreSQL (creates the "ingestion" and "ingestion_test" databases)
+docker compose up -d --wait postgres
 ```
 
 `.env` is ignored by git. Never commit it.
@@ -47,7 +69,7 @@ docker compose up -d --wait
 
 The app checks these at startup and refuses to start if any are missing or invalid, listing every problem in one error.
 
-## Run
+### Run
 
 ```bash
 npm run start:dev        # watch mode
@@ -97,6 +119,8 @@ tests/
   helpers/
 docker/
   postgres/init/  creates the test DB on first start
+Dockerfile         production image (multi-stage, non-root)
+docker-compose.yml postgres + api
 ```
 
 ## Coming next

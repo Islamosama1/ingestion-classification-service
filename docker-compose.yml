@@ -17,5 +17,24 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    build: .
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Inside Docker the DB is reached by service name, not localhost.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ingestion
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/health || exit 1']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   pgdata:
