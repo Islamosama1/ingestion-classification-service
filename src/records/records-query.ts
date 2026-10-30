@@ -35,6 +35,18 @@ function date(query: RawQuery, name: string): Date | undefined {
   return parsed;
 }
 
+// /reviews: the record filters, always limited to records needing review.
+export function parseReviewsQuery(query: RawQuery): RecordsQuery {
+  for (const name of ['status', 'needsReview']) {
+    if (query[name] !== undefined) {
+      throw new InvalidQueryError(
+        `${name} is not allowed here: /reviews only lists records that need review`,
+      );
+    }
+  }
+  return { ...parseRecordsQuery(query), needsReview: true };
+}
+
 export function parseRecordsQuery(query: RawQuery): RecordsQuery {
   const needsReview = oneOf(query, 'needsReview', ['true', 'false'] as const);
   const importId = single(query, 'importId');

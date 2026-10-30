@@ -76,6 +76,15 @@ const SELECT_RECORD = `
 const toNumber = (v: string | null): number | null =>
   v === null ? null : Number(v);
 
+const ORDER = {
+  // /records: newest stored first.
+  newest: 'r.created_at DESC, r.id DESC',
+  // /reviews: longest waiting first (when the current result was saved).
+  longestWaiting: 'c.created_at ASC, r.id ASC',
+};
+
+export type RecordsOrder = keyof typeof ORDER;
+
 // Text search treats % and _ as plain characters.
 const likePattern = (q: string): string =>
   `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
@@ -84,7 +93,10 @@ const likePattern = (q: string): string =>
 export class RecordsService {
   constructor(private readonly dataSource: DataSource) {}
 
-  async list(q: RecordsQuery): Promise<RecordsPage> {
+  async list(
+    q: RecordsQuery,
+    order: RecordsOrder = 'newest',
+  ): Promise<RecordsPage> {
     const where: string[] = [];
     const params: unknown[] = [];
     const add = (sql: string, value: unknown) => {
@@ -116,7 +128,7 @@ export class RecordsService {
     );
     const rows: RecordRow[] = await this.dataSource.query(
       `${SELECT_RECORD} ${filter}
-       ORDER BY r.created_at DESC, r.id DESC
+       ORDER BY ${ORDER[order]}
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, q.limit, q.offset],
     );
