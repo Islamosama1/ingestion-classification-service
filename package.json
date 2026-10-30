@@ -1,0 +1,53 @@
+{
+  "name": "ingestion-classification-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Imports records from external sources, validates and stores them, and classifies them in the background.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "start:dev": "nest start --watch",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{ts,js,mjs,json,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,mjs,json,yml}\"",
+    "test": "jest tests/unit",
+    "test:integration": "jest tests/integration --runInBand",
+    "test:api-flow": "jest tests/api-flow --runInBand"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.2.8",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.2.8",
+    "@nestjs/platform-express": "^11.2.8",
+    "@nestjs/typeorm": "^11.0.3",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "pg": "^8.23.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.31"
+  },
+  "overrides": {
+    "multer": "^2.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@nestjs/cli": "^11.0.24",
+    "@nestjs/testing": "^11.2.8",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.19.43",
+    "@types/supertest": "^7.2.1",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "jest": "^29.7.0",
+    "prettier": "^3.9.10",
+    "supertest": "^7.3.1",
+    "ts-jest": "^29.4.15",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1"
+  }
+}
