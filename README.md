@@ -124,6 +124,24 @@ Integration tests always use `TEST_DATABASE_URL` (set before the app loads) and 
 - The key is compared in constant time.
 - One shared key: there are no per-user accounts, so actions are not attributed to a person.
 
+## Record validation
+
+An import is `{ "records": [ ... ] }` with 1 to 1000 records. A body that isn't that shape is refused as a whole. Otherwise each record is checked on its own: one bad record doesn't block the others, and each gets its own field errors.
+
+| Field | Rule |
+|---|---|
+| `externalId` | required string, ≤ 255 chars |
+| `source` | required string, ≤ 100 chars |
+| `title` | required string, ≤ 200 chars |
+| `description` | required string, ≤ 5000 chars |
+| `date` | required ISO 8601: `2026-07-01` (midnight UTC) or a date-time with time zone (`2026-07-01T10:30:00Z`, `…+02:00`); real calendar dates only; future dates allowed |
+
+- Text is trimmed; empty or spaces-only counts as missing. Lengths are counted after trimming, in characters.
+- Types are strict: `123` is not accepted as an `externalId` (no silent conversion, so duplicate checks stay exact).
+- A date-time without a time zone is refused (ambiguous).
+- Extra fields are ignored.
+- Errors are `{ field, message }`, one per field, all bad fields reported at once.
+
 ## Database schema
 
 | Table | Holds |
