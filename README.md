@@ -15,6 +15,14 @@ A backend service that imports records from external sources, validates and stor
 | Recover failed records without duplicates or redoing work | Automatic retries with backoff; `POST /records/:id/retry`, `POST /imports/:id/retry` touch only `failed` records |
 | Slow, sometimes failing classification | Mock classifier with random delay / failures, run by a background worker with crash recovery |
 
+## Demo
+
+A manual test of the running service (`docker compose up`). A small test page, not part of this repo, sends each request to the API and shows the response. The flow: health check → request without the API key (`401`) → import 6 records (created / invalid / duplicate / conflict) → import progress while the worker classifies them → per-record feedback → search → record history → re-import (nothing overwritten) → review queue → correction (original kept in the history) → retry → error responses.
+
+![Manual test of the API, step by step](docs/media/manual-test.gif)
+
+To run the same flow yourself, use the [API collection](#api-collection).
+
 ## Stack
 
 - Node.js 20 + TypeScript
