@@ -1,0 +1,333 @@
+{
+  "info": {
+    "name": "Ingestion & Classification Service",
+    "description": "Every endpoint, in flow order. Set the collection variable apiKey to the API_KEY in your .env (and baseUrl if not http://localhost:3000), then run the folder top to bottom: ids are saved between requests and each request checks its response. Each run uses its own source, so it never collides with stored data.\n\nCLI: npx newman run postman/ingestion-classification-service.postman_collection.json --env-var apiKey=<API_KEY>",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "apiKey", "value": "CHANGE_ME_TO_A_LONG_RANDOM_KEY" },
+    { "key": "source", "value": "" },
+    { "key": "importId", "value": "" },
+    { "key": "recordId", "value": "" },
+    { "key": "reviewRecordId", "value": "" },
+    { "key": "polls", "value": "0" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health (no key)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200, db up', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json()).to.eql({ status: 'ok', db: 'up' });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "No API key → 401",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "url": "{{baseUrl}}/records"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('401 unauthorized', () => {",
+              "  pm.response.to.have.status(401);",
+              "  pm.expect(pm.response.json().error.code).to.eql('unauthorized');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create import",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/imports",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"records\": [\n    { \"externalId\": \"e-1\", \"source\": \"{{source}}\", \"title\": \"Football tournament\", \"description\": \"Open to all ages\", \"date\": \"2026-07-01\" },\n    { \"externalId\": \"e-2\", \"source\": \"{{source}}\", \"title\": \"Community picnic\", \"description\": \"Bring your own food\", \"date\": \"2026-07-05T10:00:00+02:00\" },\n    { \"externalId\": \"e-3\", \"source\": \"{{source}}\", \"title\": \"Modern art exhibition\", \"description\": \"At the city museum\", \"date\": \"2026-07-10\" },\n    { \"externalId\": \"e-4\", \"source\": \"{{source}}\", \"title\": \"\", \"description\": \"Missing title, impossible date\", \"date\": \"2026-02-30\" },\n    { \"externalId\": \"e-1\", \"source\": \"{{source}}\", \"title\": \"Football tournament\", \"description\": \"Open to all ages\", \"date\": \"2026-07-01\" },\n    { \"externalId\": \"e-3\", \"source\": \"{{source}}\", \"title\": \"Changed title\", \"description\": \"At the city museum\", \"date\": \"2026-07-10\" }\n  ]\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.collectionVariables.set('source', 'postman-' + Date.now());",
+              "pm.collectionVariables.set('polls', '0');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('202 with an outcome per record', () => {",
+              "  pm.response.to.have.status(202);",
+              "  pm.expect(body).to.include({ total: 6, created: 3, invalid: 1, duplicate: 1, conflict: 1 });",
+              "  pm.expect(body.items.map((i) => i.outcome)).to.eql(['created', 'created', 'created', 'invalid', 'duplicate', 'conflict']);",
+              "});",
+              "pm.collectionVariables.set('importId', body.importId);",
+              "pm.collectionVariables.set('recordId', body.items[0].recordId);",
+              "pm.collectionVariables.set('reviewRecordId', body.items[1].recordId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Import progress (waits until completed)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/imports/{{importId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('200 with counts and classification progress', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(body).to.have.property('classification');",
+              "});",
+              "// Classification runs in the background: ask again until done.",
+              "const polls = Number(pm.collectionVariables.get('polls')) + 1;",
+              "pm.collectionVariables.set('polls', String(polls));",
+              "if (body.status !== 'completed' && polls < 90) {",
+              "  setTimeout(() => {}, 1000);",
+              "  postman.setNextRequest(pm.info.requestName);",
+              "} else {",
+              "  pm.test('completed by the worker', () => pm.expect(body.status).to.eql('completed'));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Import items: invalid only",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/imports/{{importId}}/items?outcome=invalid"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('the invalid record with field errors', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(body.total).to.eql(1);",
+              "  pm.expect(body.items[0].errors.map((e) => e.field)).to.eql(['title', 'date']);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search records",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/records?source={{source}}&from=2026-07-01&to=2026-07-31&q=football"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('only the football record', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(body.items.map((r) => r.externalId)).to.eql(['e-1']);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get one record with history",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/records/{{recordId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('record + current classification + history', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(body.externalId).to.eql('e-1');",
+              "  pm.expect(body).to.have.property('history');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Review queue",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/reviews?source={{source}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('the picnic record needs review', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(body.items.map((r) => r.id)).to.include(pm.collectionVariables.get('reviewRecordId'));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Correct a classification",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/records/{{reviewRecordId}}/corrections",
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"category\": \"culture\", \"reason\": \"A community event\" }"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('201: correction is current, original kept', () => {",
+              "  pm.response.to.have.status(201);",
+              "  pm.expect(body.status).to.eql('classified');",
+              "  pm.expect(body.classification).to.include({ category: 'culture', kind: 'correction' });",
+              "  pm.expect(body.history[0]).to.include({ kind: 'auto', category: 'other' });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Retry a record that isn't failed → 409",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/records/{{recordId}}/retry"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('409: only failed records can be retried', () => {",
+              "  pm.response.to.have.status(409);",
+              "  pm.expect(pm.response.json().error.code).to.eql('conflict');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Retry the import's failed records",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/imports/{{importId}}/retry"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('202 with how many were requeued', () => {",
+              "  pm.response.to.have.status(202);",
+              "  pm.expect(pm.response.json().requeued).to.be.a('number');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error: invalid batch → 400",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/imports",
+        "body": { "mode": "raw", "raw": "{ \"records\": [] }" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('400 invalid_batch', () => {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json().error.code).to.eql('invalid_batch');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error: bad filter → 400",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/records?status=done"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('400 invalid_query', () => {",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json().error.code).to.eql('invalid_query');",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

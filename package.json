@@ -20,7 +20,7 @@
     "format:check": "prettier --check \"**/*.{ts,js,mjs,json,yml}\"",
     "test": "jest tests/unit",
     "test:integration": "jest -c jest.integration.config.js tests/integration --runInBand",
-    "test:api-flow": "jest -c jest.integration.config.js tests/api-flow --runInBand"
+    "test:api-flow": "jest tests/api-flow --runInBand"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.8",
